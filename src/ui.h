@@ -16,3 +16,7 @@ void uiInit(lgfx::LGFX_Device* gfx);
 
 // Отрисовка экрана с заданной температурой (для SENSOR_ERROR температура игнорируется)
 void uiDraw(UIScreen screen, float temperature);
+
+void uiDrawTimerSetup(int cursor,
+                      uint8_t s1, uint8_t e1,
+                      uint8_t s2, uint8_t e2);

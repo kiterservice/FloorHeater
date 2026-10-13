@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <time.h>
+#include <ArduinoOTA.h>
 
 namespace {
 
@@ -11,6 +12,7 @@ namespace {
 
     bool     s_wifiStarted     = false;
     bool     s_timeConfigured  = false;
+    bool     s_otaReady        = false;
     uint32_t s_lastReconnectMs = 0;
 
     // Не пытаться реконнектиться чаще, чем раз в 30 секунд
@@ -19,32 +21,26 @@ namespace {
     // NTP
     const char* NTP_SERVER1 = "pool.ntp.org";
     const char* NTP_SERVER2 = "time.nist.gov";
-    const char* TZ_INFO     = "MSK-3";  // Москва, UTC+3, без перехода на летнее/зимнее
+    const char* TZ_INFO     = "MSK-3";   // Москва, UTC+3
+
+    // OTA
+    const char* OTA_HOSTNAME = "warmfield";
 
 }  // namespace
 
 void networkInit(const char* ssid, const char* password) {
     s_ssid     = ssid;
     s_password = password;
-
-    WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(true);
-    WiFi.begin(s_ssid, s_password);
     s_wifiStarted = true;
 
-        // --- НАЧАЛО ВСТАВКИ: Задание статического IP ---
-    IPAddress local_IP(192, 168, 0, 158);     // Ваш желаемый IP
-    IPAddress gateway(192, 168, 0, 1);        // IP вашего роутера (шлюз)
-    IPAddress subnet(255, 255, 255, 0);       // Маска подсети
-    IPAddress primaryDNS(192, 168, 0, 1);     // Основной DNS (обычно это роутер)
-    IPAddress secondaryDNS(8, 8, 8, 8);       // Вторичный DNS (например, Google)
-
-    if (!WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS)) {
-        Serial.println("Ошибка настройки статического IP");
-    }
+    WiFi.persistent(false);          // не писать в NVS на каждый begin
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
+    WiFi.setSleep(false);            // не уходить в энергосбережение
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
+    WiFi.begin(s_ssid, s_password);
 
     Serial.printf("Wi-Fi: подключение к \"%s\"...\n", s_ssid);
-
     // НЕ ждём подключения здесь. loop() продолжит работу,
     // и UI/регулятор/датчик будут работать независимо от сети.
 }
@@ -55,6 +51,10 @@ bool networkIsConnected() {
 
 bool networkTimeSynced() {
     return s_timeConfigured && (time(nullptr) > 1700000000);  // ~ноябрь 2023
+}
+
+bool networkOtaReady() {
+    return s_otaReady;
 }
 
 void networkLoop() {
@@ -71,7 +71,17 @@ void networkLoop() {
         WiFi.begin(s_ssid, s_password);
     }
 
-    // 2. Настройка NTP — один раз, когда Wi-Fi подключился
+    // 2. Запуск OTA — один раз, когда Wi-Fi реально подключился
+    if (!s_otaReady && WiFi.status() == WL_CONNECTED) {
+        ArduinoOTA.setHostname(OTA_HOSTNAME);
+        // ArduinoOTA.setPassword("ota_password");   // при желании
+        ArduinoOTA.begin();
+        s_otaReady = true;
+        Serial.print("OTA: ready, IP=");
+        Serial.println(WiFi.localIP());
+    }
+
+    // 3. Настройка NTP — один раз, когда Wi-Fi подключился
     if (!s_timeConfigured && WiFi.status() == WL_CONNECTED) {
         configTime(0, 0, NTP_SERVER1, NTP_SERVER2);
         setenv("TZ", TZ_INFO, 1);
@@ -82,14 +92,15 @@ void networkLoop() {
         Serial.println("NTP: синхронизация времени...");
     }
 
-    // 3. Периодический лог статуса (для отладки)
+    // 4. Периодический лог статуса (для отладки)
     static uint32_t lastStatusMs = 0;
     if (now - lastStatusMs > 10000) {
         lastStatusMs = now;
         if (WiFi.status() == WL_CONNECTED) {
-            Serial.printf("Wi-Fi OK, RSSI=%d dBm, время %s\n",
-                          WiFi.RSSI(),
-                          networkTimeSynced() ? "синхронизировано" : "нет");
+            Serial.printf("Wi-Fi OK, IP=%s, RSSI=%d dBm, время %s\n",
+              WiFi.localIP().toString().c_str(),
+              WiFi.RSSI(),
+              networkTimeSynced() ? "синхронизировано" : "нет");
         } else {
             Serial.println("Wi-Fi: не подключён");
         }

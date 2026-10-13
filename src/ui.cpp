@@ -120,3 +120,70 @@ void uiDraw(UIScreen screen, float temperature)
     // 3. Один раз выводим готовый холст на дисплей — цельным куском
     s_canvas->pushSprite(s_gfx, 0, 0);
 }
+
+
+void uiDrawTimerSetup(int cursor,
+                      uint8_t s1, uint8_t e1,
+                      uint8_t s2, uint8_t e2)
+{
+    if (!s_gfx || !s_canvas) return;
+
+    s_canvas->fillScreen(TFT_NAVY);
+
+    // Формат HH:MM из слота (0..48).
+    // slot / 2 = часы, (slot % 2) * 30 = минуты
+    auto fmt = [](char* buf, size_t n, uint8_t slot) {
+        int h = slot / 2;
+        int m = (slot % 2) * 30;
+        snprintf(buf, n, "%02d:%02d", h, m);
+    };
+
+    char b1[8], b2[8], b3[8], b4[8];
+    fmt(b1, sizeof(b1), s1);
+    fmt(b2, sizeof(b2), e1);
+    fmt(b3, sizeof(b3), s2);
+    fmt(b4, sizeof(b4), e2);
+
+    // Размер 4 подобран под формат HH:MM (см. расчёт).
+    // Если хочется крупнее — уменьшай формат или меняй шрифт.
+    constexpr int TIMER_FONT_SIZE = 4;
+    constexpr int CHAR_W = 6 * TIMER_FONT_SIZE;   // 24 px
+    constexpr int GAP    = CHAR_W;                // один пробел
+    constexpr int LINE_H = 8 * TIMER_FONT_SIZE;   // 32 px
+
+    s_canvas->setFont(&fonts::Font0);
+    s_canvas->setTextSize(TIMER_FONT_SIZE);
+    s_canvas->setTextColor(TFT_WHITE, TFT_NAVY);
+    s_canvas->setTextDatum(lgfx::top_left);
+
+    // Координаты: числа начинаются от левого края, второй столбец — через один пробел
+    const int colX1 = 20;
+    const int colX2 = colX1 + CHAR_W * 5 + GAP;   // 20 + 120 + 24 = 164
+
+    const int rowY1 = 100;
+    const int rowY2 = 200;
+
+    // Ряд 1 — таймер 1
+    s_canvas->drawString(b1, colX1, rowY1);
+    s_canvas->drawString(b2, colX2, rowY1);
+
+    // Ряд 2 — таймер 2
+    s_canvas->drawString(b3, colX1, rowY2);
+    s_canvas->drawString(b4, colX2, rowY2);
+
+    // Подсветка выбранного значения — прямоугольник вокруг числа
+    const int cursorX = (cursor % 2 == 0) ? colX1 : colX2;
+    const int cursorY = (cursor < 2)      ? rowY1 : rowY2;
+    const int boxW = CHAR_W * 5;   // ширина одного числа «00:00»
+    const int boxH = LINE_H;
+
+    s_canvas->drawRect(cursorX - 4, cursorY - 4, boxW + 8, boxH + 8, TFT_YELLOW);
+    s_canvas->drawRect(cursorX - 5, cursorY - 5, boxW + 10, boxH + 10, TFT_YELLOW);
+
+    // Поворот всей картинки на −45° при выводе — как в скринсейвере
+    s_canvas->pushRotateZoom(s_gfx,
+                             180, 180,        // центр поворота
+                             -45.0f,          // угол
+                             1.0f, 1.0f,      // без масштабирования
+                             0x0000);         // прозрачный цвет (в canvas его нет)
+}

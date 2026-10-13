@@ -45,6 +45,13 @@ uint32_t lastActivityMs = 0;
 
 float quantize05(float t) { return roundf(t * 2.0f) * 0.5f; }
 
+#include "timers.h"
+
+bool     timerSetupActive = false;
+int      timerCursor      = 0;              // 0..3
+uint32_t timerSetupActivityMs = 0;
+constexpr uint32_t TIMER_SETUP_TIMEOUT_MS = 30000;
+
 UIScreen screenFromRegulator(RegulatorState s) {
     switch (s) {
     case RegulatorState::OFF:     return UIScreen::WAIT;
@@ -114,6 +121,7 @@ void processSensor(bool uiActive) {
     // Если UI сейчас не работает (хранитель) — на этом всё.
     // Никаких requestTransition() и uiDraw() — они будут мешать анимации.
     if (!uiActive) return;
+    if (timerSetupActive) return; 
 
     if (wasError != sensorErrorActive) {
         requestTransition();
@@ -147,21 +155,59 @@ void processTimeout() {
 }
 
 void processButtons() {
-    Button b = buttonsPoll();
-        
-    if (b == Button::NONE) return;
-        lastActivityMs = millis();   // любая активность сбрасывает таймер
-    if (b == Button::SPARE) {
-        if (transitionActive) {
-            transitionActive = false;
-            uiDraw(uiActiveScreen(), uiActiveValue());
+    ButtonEvent ev = buttonsPoll();
+    if (ev.type == ButtonEventType::NONE) return;
+
+    lastActivityMs = millis();
+    const bool longPress = (ev.type == ButtonEventType::LONG_PRESS);
+    const Button b = ev.button;
+
+    // ── Долгое нажатие POWER — вход/выход из настройки таймеров ──────
+    if (b == Button::POWER && longPress) {
+        if (timerSetupActive) {
+            timerSetupActive = false;
+            currentScreen = screenFromRegulator(regulatorGetState());
+            requestTransition();
+        } else {
+            timerSetupActive = true;
+            timerCursor = 0;
+            timerSetupActivityMs = millis();
+            uiDrawTimerSetup(timerCursor,
+                             timersGet(0).startSlot, timersGet(0).endSlot,
+                             timersGet(1).startSlot, timersGet(1).endSlot);
         }
-        backlightEnabled = !backlightEnabled;
         return;
     }
 
+    // ── Внутри настройки таймеров ────────────────────────────────────
+    if (timerSetupActive) {
+        timerSetupActivityMs = millis();
+
+        if (b == Button::SPARE) {
+            backlightEnabled = !backlightEnabled;
+            return;
+        }
+
+        if (b == Button::POWER) {
+            timerCursor = (timerCursor + 1) % 4;
+        } else if (b == Button::PLUS || b == Button::MINUS) {
+            const int  idx     = (timerCursor < 2) ? 0 : 1;
+            const bool isStart = (timerCursor % 2 == 0);
+            const int  delta   = (b == Button::PLUS) ? +1 : -1;
+            timersAdjust(idx, isStart, delta);
+        }
+
+        uiDrawTimerSetup(timerCursor,
+                         timersGet(0).startSlot, timersGet(0).endSlot,
+                         timersGet(1).startSlot, timersGet(1).endSlot);
+        return;
+    }
+
+    // ── Обычная логика ───────────────────────────────────────────────
     if (transitionActive) return;
     if (sensorErrorActive) return;
+
+    // ...дальше без изменений (switch по POWER/PLUS/MINUS/SPARE)
 
     switch (b) {
     case Button::POWER:
@@ -202,7 +248,11 @@ void processButtons() {
 }
 
 void setup() {
+    // Отключение brownout — только если действительно нужно
+    // WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
     regulatorInit();
+    timersInit();
 
     tft = initDisplay();
     if (!tft) return;
@@ -225,15 +275,23 @@ void setup() {
 
     uiDraw(uiActiveScreen(), uiActiveValue());
 
+    // ─── Сеть — в самом конце setup ──────────────────────────────────
+    delay(1500);                     // дать питанию устояться перед Wi-Fi
     networkInit(WIFI_SSID, WIFI_PASSWORD);
-    ArduinoOTA.setHostname("warmfield");
-    //ArduinoOTA.setPassword("ota_password");   // необязательно, но желательно
-    ArduinoOTA.begin();
+
+    // ArduinoOTA.begin() НЕ здесь! Он должен быть вызван
+    // только когда Wi-Fi реально подключился. Это делается
+    // внутри networkLoop() (см. ниже).
 }
 
 void loop() {
+      // OTA — только если сервер уже поднялся
+    if (networkOtaReady()) {
+        ArduinoOTA.handle();
+    }
+
+    // Сеть — реконнект, NTP, логи
     networkLoop();
-    ArduinoOTA.handle();
 
     fadeLoop();
 
@@ -251,8 +309,8 @@ void loop() {
             Serial.println("Backlight off (long inactivity)");
         }
 
-        Button b = buttonsPoll();
-        if (b != Button::NONE) {
+        ButtonEvent ev = buttonsPoll();
+        if (ev.type != ButtonEventType::NONE) {
             screensaverExit();
             lastActivityMs = millis();
 
@@ -286,4 +344,16 @@ void loop() {
     processSensor(true);
     processTimeout();
     processButtons();
+        // ── Таймаут настройки таймеров ───────────────────────────────────
+    if (timerSetupActive
+        && (millis() - timerSetupActivityMs > TIMER_SETUP_TIMEOUT_MS)) {
+        timerSetupActive = false;
+        currentScreen = screenFromRegulator(regulatorGetState());
+        requestTransition();
+    }
+        if (!transitionActive && !timerSetupActive
+        && (millis() - lastActivityMs > SCREENSAVER_TIMEOUT_MS)) {
+        screensaverEnter();
+        return;
+    }
 }
