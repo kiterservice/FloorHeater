@@ -7,6 +7,11 @@
 #include "thermistor.h"
 #include "regulator.h"
 #include "screensaver.h"
+#include "network.h"
+#include "secrets.h"
+#include <ArduinoOTA.h>
+
+// Wi-Fi креденшелы. Позже можно вынести в NVS или в конфиг-файл.
 
 lgfx::LGFX_Device* tft = nullptr;
 
@@ -219,9 +224,17 @@ void setup() {
     currentBrightness = BRIGHTNESS_NORMAL;
 
     uiDraw(uiActiveScreen(), uiActiveValue());
+
+    networkInit(WIFI_SSID, WIFI_PASSWORD);
+    ArduinoOTA.setHostname("warmfield");
+    //ArduinoOTA.setPassword("ota_password");   // необязательно, но желательно
+    ArduinoOTA.begin();
 }
 
 void loop() {
+    networkLoop();
+    ArduinoOTA.handle();
+
     fadeLoop();
 
     // ─── Хранитель ────────────────────────────────────────────────

@@ -43,9 +43,9 @@ namespace {
 
     // Позиции кустов (левый верхний угол)
     constexpr int GRASS1_X = 300;
-    constexpr int GRASS1_Y = 230;
+    constexpr int GRASS1_Y = 240;
     constexpr int GRASS2_X = 100;
-    constexpr int GRASS2_Y = 230;
+    constexpr int GRASS2_Y = 240;
     // Период смены кадра водорослей (мс). Один цикл = GRASS_FRAME_MS * 2
     constexpr uint32_t GRASS_FRAME_MS = 500;
 
