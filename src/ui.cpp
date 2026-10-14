@@ -2,9 +2,15 @@
 #include "ui.h"
 #include "display_config.h"
 #include "etoronum70.h"
+#include "work_on_timer.h"
+#include "rtc.h"
+
+static bool     s_showTimerIcon = false;
+static uint16_t s_timerIconBuf[WORK_ON_TIMER_W * WORK_ON_TIMER_H];
 
 static lgfx::LGFX_Device*   s_gfx    = nullptr;
 static lgfx::LGFX_Sprite*   s_canvas = nullptr;   // полноэкранный холст
+
 
 namespace {
 
@@ -87,6 +93,8 @@ void uiInit(lgfx::LGFX_Device* gfx)
     }
 
     Serial.printf("Canvas OK, %d bytes in PSRAM\n", SCREEN_W * SCREEN_H * 2);
+
+    workOnTimerFill(s_timerIconBuf);
 }
 
 void uiDraw(UIScreen screen, float temperature)
@@ -116,7 +124,14 @@ void uiDraw(UIScreen screen, float temperature)
     } else {
         drawErrorRingInto(s_canvas);
     }
-
+    // Значок «работа по таймеру» — на всех экранах
+    if (s_showTimerIcon) {
+        constexpr int ICON_X = 300;
+        constexpr int ICON_Y = 180;
+        s_canvas->pushImage(ICON_X, ICON_Y,
+                            WORK_ON_TIMER_W, WORK_ON_TIMER_H,
+                            s_timerIconBuf, 0x0000);
+    }
     // 3. Один раз выводим готовый холст на дисплей — цельным куском
     s_canvas->pushSprite(s_gfx, 0, 0);
 }
@@ -128,10 +143,13 @@ void uiDrawTimerSetup(int cursor,
 {
     if (!s_gfx || !s_canvas) return;
 
-    s_canvas->fillScreen(TFT_NAVY);
+    // Мягкий тёмно-синий фон — низкая насыщенность, не «режет» глаз.
+    // Альтернативы: 0x2124 (графитовый), 0x1904 (тёмный хаки),
+    //               0x2985 (тёмный сине-зелёный).
+    constexpr uint16_t BG_TIMER = 0xD65B;
+    s_canvas->fillScreen(BG_TIMER);
 
-    // Формат HH:MM из слота (0..48).
-    // slot / 2 = часы, (slot % 2) * 30 = минуты
+    // Формат HH:MM
     auto fmt = [](char* buf, size_t n, uint8_t slot) {
         int h = slot / 2;
         int m = (slot % 2) * 30;
@@ -144,46 +162,53 @@ void uiDrawTimerSetup(int cursor,
     fmt(b3, sizeof(b3), s2);
     fmt(b4, sizeof(b4), e2);
 
-    // Размер 4 подобран под формат HH:MM (см. расчёт).
-    // Если хочется крупнее — уменьшай формат или меняй шрифт.
     constexpr int TIMER_FONT_SIZE = 4;
     constexpr int CHAR_W = 6 * TIMER_FONT_SIZE;   // 24 px
     constexpr int GAP    = CHAR_W;                // один пробел
     constexpr int LINE_H = 8 * TIMER_FONT_SIZE;   // 32 px
 
-    s_canvas->setFont(&fonts::Font0);
-    s_canvas->setTextSize(TIMER_FONT_SIZE);
-    s_canvas->setTextColor(TFT_WHITE, TFT_NAVY);
-    s_canvas->setTextDatum(lgfx::top_left);
-
-    // Координаты: числа начинаются от левого края, второй столбец — через один пробел
-    const int colX1 = 20;
+    const int colX1 = 50;
     const int colX2 = colX1 + CHAR_W * 5 + GAP;   // 20 + 120 + 24 = 164
 
+    // Строки чуть выше, чтобы снизу осталось место для текущего времени
     const int rowY1 = 100;
-    const int rowY2 = 200;
+    const int rowY2 = 190;
 
-    // Ряд 1 — таймер 1
+    s_canvas->setFont(&fonts::Font0);
+    s_canvas->setTextSize(TIMER_FONT_SIZE);
+    s_canvas->setTextColor(TFT_WHITE, BG_TIMER);
+    s_canvas->setTextDatum(lgfx::top_left);
+
     s_canvas->drawString(b1, colX1, rowY1);
     s_canvas->drawString(b2, colX2, rowY1);
-
-    // Ряд 2 — таймер 2
     s_canvas->drawString(b3, colX1, rowY2);
     s_canvas->drawString(b4, colX2, rowY2);
 
-    // Подсветка выбранного значения — прямоугольник вокруг числа
+    // Подсветка выбранного значения
     const int cursorX = (cursor % 2 == 0) ? colX1 : colX2;
     const int cursorY = (cursor < 2)      ? rowY1 : rowY2;
-    const int boxW = CHAR_W * 5;   // ширина одного числа «00:00»
+    const int boxW = CHAR_W * 5;
     const int boxH = LINE_H;
 
     s_canvas->drawRect(cursorX - 4, cursorY - 4, boxW + 8, boxH + 8, TFT_YELLOW);
     s_canvas->drawRect(cursorX - 5, cursorY - 5, boxW + 10, boxH + 10, TFT_YELLOW);
 
-    // Поворот всей картинки на −45° при выводе — как в скринсейвере
-    s_canvas->pushRotateZoom(s_gfx,
-                             180, 180,        // центр поворота
-                             -45.0f,          // угол
-                             1.0f, 1.0f,      // без масштабирования
-                             0x0000);         // прозрачный цвет (в canvas его нет)
+    // Текущее время снизу — чуть меньше и приглушённее, чтобы не спорить с таймерами
+    if (rtcIsRunning()) {
+        char timeBuf[8];
+        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d",
+                 rtcGetHour(), rtcGetMinute());
+
+        s_canvas->setTextSize(4);
+        s_canvas->setTextColor(0xBDF7, BG_TIMER);   // светло-серый
+        s_canvas->setTextDatum(lgfx::middle_center);
+        s_canvas->drawString(timeBuf, 180, 285);
+    }
+
+    // Поворот на выводе — как и раньше
+    s_canvas->pushRotateZoom(s_gfx, 180, 180, -45.0f, 1.0f, 1.0f, 0x0000);
+}
+
+void uiSetTimerIconVisible(bool visible) {   // ← новое
+    s_showTimerIcon = visible;
 }

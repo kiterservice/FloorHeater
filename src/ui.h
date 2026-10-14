@@ -20,3 +20,5 @@ void uiDraw(UIScreen screen, float temperature);
 void uiDrawTimerSetup(int cursor,
                       uint8_t s1, uint8_t e1,
                       uint8_t s2, uint8_t e2);
+
+void uiSetTimerIconVisible(bool visible);
