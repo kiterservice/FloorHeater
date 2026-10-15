@@ -217,8 +217,7 @@ void processButtons() {
     switch (b) {
     case Button::POWER:
         // Для POWER повтор не приходит, но на всякий случай
-        if (repeat) return;
-        if (currentScreen == UIScreen::SET_TEMP) {
+            if (currentScreen == UIScreen::SET_TEMP) {
             currentScreen = screenFromRegulator(regulatorGetState());
         } else {
             regulatorToggle();
@@ -262,7 +261,7 @@ void setup() {
     //delay(15000);
     regulatorInit();
     timersInit();
-
+    rtcInit();
     tft = initDisplay();
     if (!tft) return;
 
@@ -285,7 +284,7 @@ void setup() {
     uiDraw(uiActiveScreen(), uiActiveValue());
     
     
-    rtcInit();
+    
     uiSetTimerIconVisible(false);
 
 }
@@ -338,32 +337,14 @@ void loop() {
         return;
     }
 
-    // ─── Вход в хранитель ─────────────────────────────────────────
-    if (!transitionActive
-        && (millis() - lastActivityMs > SCREENSAVER_TIMEOUT_MS)) {
-        screensaverEnter();
-        return;
-    }
+    
 
     // ─── Обычная логика ──────────────────────────────────────────
     applyTransition();
     processSensor(true);
     processTimeout();
     processButtons();
-        // ── Таймаут настройки таймеров ───────────────────────────────────
-    if (timerSetupActive
-        && (millis() - timerSetupActivityMs > TIMER_SETUP_TIMEOUT_MS)) {
-        timerSetupActive = false;
-        currentScreen = screenFromRegulator(regulatorGetState());
-        requestTransition();
-    }
-        if (!transitionActive && !timerSetupActive
-        && (millis() - lastActivityMs > SCREENSAVER_TIMEOUT_MS)) {
-        screensaverEnter();
-        return;
-    }
-    
-        // Перерисовка экрана таймеров раз в минуту — чтобы обновлялось время
+     // Перерисовка экрана таймеров раз в минуту — чтобы обновлялось время
     static uint32_t lastTimerRedrawMs = 0;
     if (timerSetupActive && (millis() - lastTimerRedrawMs > 30000)) {
         lastTimerRedrawMs = millis();

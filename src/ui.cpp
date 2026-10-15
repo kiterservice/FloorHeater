@@ -36,13 +36,14 @@ namespace {
 
     // Рисуем текст во внутренний маленький спрайт, потом с поворотом
     // впечатываем его в холст-приёмник.
-    void drawRotatedTextInto(lgfx::LGFX_Sprite* dst,
+void drawRotatedTextInto(lgfx::LGFX_Sprite* dst,
                              const char* text,
                              uint16_t fgColor,
                              uint16_t bgColor)
     {
         lgfx::LGFX_Sprite sprite(dst);
         sprite.setColorDepth(16);
+        sprite.setPsram(true); 
 
         if (!sprite.createSprite(SPRITE_W, SPRITE_H)) {
             Serial.println("Text sprite allocation FAILED!");
