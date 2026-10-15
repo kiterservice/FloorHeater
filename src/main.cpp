@@ -258,6 +258,8 @@ void setup() {
     // Отключение brownout — только если действительно нужно
     // WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
     //Serial.begin(15200);
+
+    //Serial.setTxTimeoutMs(0);
     //delay(15000);
     regulatorInit();
     timersInit();
@@ -292,7 +294,21 @@ void setup() {
 void loop() {
     fadeLoop();
 
-        // Опрос расписания — раз в секунду
+    // ─── Лог памяти ────────────────────────────────────────────────
+    static uint32_t lastMemLog = 0;
+    if (millis() - lastMemLog > 10000) {
+        lastMemLog = millis();
+        // Логируем только если есть место в TX-буфере — иначе пропуск,
+        // чтобы не блокировать loop(), когда Serial-кабель не подключён
+        if (Serial.availableForWrite() > 20){
+            Serial.printf("DRAM=%d PSRAM=%d MinDRAM=%d\n",
+                          ESP.getFreeHeap(),
+                          ESP.getFreePsram(),
+                          ESP.getMinFreeHeap());
+        }
+    }
+
+    // ─── Опрос расписания ──────────────────────────────────────────
     static uint32_t lastSchedulerMs = 0;
     if (millis() - lastSchedulerMs > 1000) {
         lastSchedulerMs = millis();
@@ -307,8 +323,17 @@ void loop() {
         }
     }
 
-    // ─── Хранитель ────────────────────────────────────────────────
-        if (screensaverIsActive()) {
+    // ─── ВХОД В ХРАНИТЕЛЬ ──────────────────────────────────────────
+    if (!transitionActive
+        && !timerSetupActive
+        && !screensaverIsActive()
+        && (millis() - lastActivityMs > SCREENSAVER_TIMEOUT_MS)) {
+        screensaverEnter();
+        return;
+    }
+
+    // ─── Обработка активного хранителя ─────────────────────────────
+    if (screensaverIsActive()) {
         processSensor(false);
         screensaverTick(millis());
 
@@ -319,7 +344,6 @@ void loop() {
         lastActivityMs = millis();
         if (!backlightEnabled) backlightEnabled = true;
 
-        // Долгое удержание POWER из хранителя → сразу в настройку таймеров
         if (ev.type == ButtonEventType::LONG_PRESS && ev.button == Button::POWER) {
             timerSetupActive = true;
             timerCursor = 0;
@@ -328,7 +352,6 @@ void loop() {
                              timersGet(0).startSlot, timersGet(0).endSlot,
                              timersGet(1).startSlot, timersGet(1).endSlot);
         } else {
-            // Просто пробуждение — синхронизируем экран
             if (!sensorErrorActive && currentScreen != UIScreen::SET_TEMP) {
                 currentScreen = screenFromRegulator(regulatorGetState());
             }
@@ -337,14 +360,13 @@ void loop() {
         return;
     }
 
-    
-
-    // ─── Обычная логика ──────────────────────────────────────────
+    // ─── Обычная логика ────────────────────────────────────────────
     applyTransition();
     processSensor(true);
     processTimeout();
     processButtons();
-     // Перерисовка экрана таймеров раз в минуту — чтобы обновлялось время
+
+    // Перерисовка экрана таймеров раз в 30 секунд
     static uint32_t lastTimerRedrawMs = 0;
     if (timerSetupActive && (millis() - lastTimerRedrawMs > 30000)) {
         lastTimerRedrawMs = millis();
@@ -353,12 +375,11 @@ void loop() {
                          timersGet(1).startSlot, timersGet(1).endSlot);
     }
 
+    // Таймаут настройки таймеров — 30 секунд
     if (timerSetupActive && (millis() - timerSetupActivityMs > TIMER_SETUP_TIMEOUT_MS)) {
-    timerSetupActive = false;
-    schedulerOnTimerSetupExit();                              // <──
-    currentScreen = screenFromRegulator(regulatorGetState());
-
-
-    requestTransition();
-}
+        timerSetupActive = false;
+        schedulerOnTimerSetupExit();
+        currentScreen = screenFromRegulator(regulatorGetState());
+        requestTransition();
+    }
 }
